@@ -58,7 +58,12 @@ async function setActiveHome(home) {
       execFileSync("reg.exe", ["ADD", "HKCU\\Environment", "/v", VAR, "/t", "REG_SZ", "/d", value, "/f"], { windowsHide: true, stdio: "ignore" });
       process.env[VAR] = value;
     } else {
-      execFileSync("reg.exe", ["DELETE", "HKCU\\Environment", "/v", VAR, "/f"], { windowsHide: true, stdio: "ignore" });
+      try {
+        execFileSync("reg.exe", ["QUERY", "HKCU\\Environment", "/v", VAR], { windowsHide: true, stdio: "ignore" });
+        execFileSync("reg.exe", ["DELETE", "HKCU\\Environment", "/v", VAR, "/f"], { windowsHide: true, stdio: "ignore" });
+      } catch (error) {
+        if (error.status !== 1) throw error;
+      }
       delete process.env[VAR];
     }
     return;
