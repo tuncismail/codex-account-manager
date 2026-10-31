@@ -32,8 +32,8 @@
         "codexAccountManager.showStatusBar": { "type": "boolean", "default": true },
         "codexAccountManager.statusBarPriority": { "type": "number", "default": 100 },
         "codexAccountManager.environmentSetting": {
-          "type": "string", "default": "chatgpt.environmentVariables",
-          "description": "VS Code setting used by the Codex extension for environment variables. Change this if your installed Codex extension uses another section."
+          "type": "string", "default": "",
+          "description": "Optional registered VS Code setting in section.setting form. Leave empty to manage CODEX_HOME as a Windows user environment variable."
         },
         "codexAccountManager.autoFailover": {
           "type": "boolean", "default": false,

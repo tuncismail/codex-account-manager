@@ -4,6 +4,7 @@ const vscode = require("vscode");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { execFileSync } = require("child_process");
 const { ensureSharedSessions } = require("./shared-sessions");
 
 const OWN = "codexAccountManager";
@@ -26,13 +27,15 @@ function samePath(a, b) {
 }
 
 function settingParts() {
-  const configured = vscode.workspace.getConfiguration(OWN).get("environmentSetting") || "chatgpt.environmentVariables";
+  const configured = vscode.workspace.getConfiguration(OWN).get("environmentSetting") || "";
   const index = configured.lastIndexOf(".");
-  return index < 1 ? ["chatgpt", "environmentVariables"] : [configured.slice(0, index), configured.slice(index + 1)];
+  return index < 1 ? null : [configured.slice(0, index), configured.slice(index + 1)];
 }
 
 function readEnvironment() {
-  const [section, key] = settingParts();
+  const setting = settingParts();
+  if (!setting) return [];
+  const [section, key] = setting;
   const inspected = vscode.workspace.getConfiguration(section).inspect(key);
   const raw = inspected ? inspected.globalValue : undefined;
   if (Array.isArray(raw)) return raw.filter((x) => x && typeof x.name === "string").map((x) => ({ name: x.name, value: String(x.value == null ? "" : x.value) }));
@@ -47,7 +50,19 @@ function activeHome() {
 
 async function setActiveHome(home) {
   prepareSharedSessions(home);
-  const [section, key] = settingParts();
+  const setting = settingParts();
+  if (!setting) {
+    const value = home ? normalizeHome(home) : "";
+    if (value) {
+      execFileSync("reg.exe", ["ADD", "HKCU\\Environment", "/v", VAR, "/t", "REG_SZ", "/d", value, "/f"], { windowsHide: true, stdio: "ignore" });
+      process.env[VAR] = value;
+    } else {
+      execFileSync("reg.exe", ["DELETE", "HKCU\\Environment", "/v", VAR, "/f"], { windowsHide: true, stdio: "ignore" });
+      delete process.env[VAR];
+    }
+    return;
+  }
+  const [section, key] = setting;
   const kept = readEnvironment().filter((x) => x.name !== VAR);
   const next = home ? kept.concat([{ name: VAR, value: normalizeHome(home) }]) : kept;
   await vscode.workspace.getConfiguration(section).update(key, next, vscode.ConfigurationTarget.Global);
@@ -109,8 +124,8 @@ function refresh() {
 }
 
 async function reloadPrompt(label) {
-  const choice = await vscode.window.showInformationMessage("Switched to " + label + ". Reload VS Code so Codex starts with the new CODEX_HOME.", "Reload Window", "Later");
-  if (choice === "Reload Window") await vscode.commands.executeCommand("workbench.action.reloadWindow");
+  const choice = await vscode.window.showInformationMessage("Switched to " + label + ". Restart VS Code so Codex starts with the new CODEX_HOME.", "Restart VS Code", "Later");
+  if (choice === "Restart VS Code") await vscode.commands.executeCommand("workbench.action.quit");
 }
 
 async function switchCommand() {
@@ -185,7 +200,7 @@ function activate(context) {
     vscode.commands.registerCommand("codexAccountManager.remove", guarded(removeCommand)),
     vscode.commands.registerCommand("codexAccountManager.usage", guarded(usageCommand)),
     vscode.commands.registerCommand("codexAccountManager.reveal", guarded(revealCommand)),
-    vscode.workspace.onDidChangeConfiguration((event) => { if (event.affectsConfiguration(OWN) || event.affectsConfiguration(settingParts()[0] + "." + settingParts()[1])) refresh(); })
+    vscode.workspace.onDidChangeConfiguration((event) => { const setting = settingParts(); if (event.affectsConfiguration(OWN) || (setting && event.affectsConfiguration(setting[0] + "." + setting[1]))) refresh(); })
   ];
   context.subscriptions.push(...disposables);
   try { prepareSharedSessions(activeHome()); }
