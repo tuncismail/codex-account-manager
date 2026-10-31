@@ -45,7 +45,8 @@ function readEnvironment() {
 
 function activeHome() {
   const entry = readEnvironment().find((x) => x.name === VAR);
-  return entry && normalizeHome(entry.value) ? normalizeHome(entry.value) : null;
+  const configured = entry && normalizeHome(entry.value);
+  return configured || normalizeHome(process.env[VAR]) || null;
 }
 
 async function setActiveHome(home) {
@@ -124,8 +125,8 @@ function refresh() {
 }
 
 async function reloadPrompt(label) {
-  const choice = await vscode.window.showInformationMessage("Switched to " + label + ". Restart VS Code so Codex starts with the new CODEX_HOME.", "Restart VS Code", "Later");
-  if (choice === "Restart VS Code") await vscode.commands.executeCommand("workbench.action.quit");
+  const choice = await vscode.window.showInformationMessage("Switched to " + label + ". Reload the VS Code window so Codex starts with the new CODEX_HOME.", "Reload Window", "Later");
+  if (choice === "Reload Window") await vscode.commands.executeCommand("workbench.action.reloadWindow");
 }
 
 async function switchCommand() {
