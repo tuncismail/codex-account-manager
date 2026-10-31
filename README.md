@@ -8,6 +8,9 @@ Independent VS Code extension for switching isolated Codex profiles through
 - Named profiles and one-click switching from the status bar.
 - Profile directories are isolated; switching updates the configured Codex
   extension environment setting and asks for a VS Code reload.
+- Session transcripts and the session index are shared across profiles, so a
+  conversation can be resumed after switching accounts. Credentials, config,
+  caches, and other account state remain isolated.
 - Local activity summary (file count and storage size), without pretending to
   know OpenAI's server-side quota.
 - Optional local activity thresholds and automatic failover to the next eligible
@@ -26,4 +29,7 @@ Codex extension exposes a different setting, change
 `codexAccountManager.environmentSetting` to `section.setting`.
 
 The extension uses the official `CODEX_HOME` mechanism. It does not merge
-histories or credential files between profiles.
+credentials between profiles. On first activation it links each profile's
+`sessions` directory and `session_index.jsonl` to the default Codex home,
+preserving a backup if migration is needed. Do not run two active Codex
+sessions that write the same conversation at the same time.

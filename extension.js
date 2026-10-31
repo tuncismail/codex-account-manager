@@ -4,6 +4,7 @@ const vscode = require("vscode");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { ensureSharedSessions } = require("./shared-sessions");
 
 const OWN = "codexAccountManager";
 const DEFAULT_HOME = path.join(os.homedir(), ".codex");
@@ -45,10 +46,19 @@ function activeHome() {
 }
 
 async function setActiveHome(home) {
+  prepareSharedSessions(home);
   const [section, key] = settingParts();
   const kept = readEnvironment().filter((x) => x.name !== VAR);
   const next = home ? kept.concat([{ name: VAR, value: normalizeHome(home) }]) : kept;
   await vscode.workspace.getConfiguration(section).update(key, next, vscode.ConfigurationTarget.Global);
+}
+
+function prepareSharedSessions(nextHome) {
+  return ensureSharedSessions(DEFAULT_HOME, [
+    activeHome(),
+    nextHome,
+    ...profiles().map((profile) => profile.home),
+  ]);
 }
 
 function profiles() {
@@ -127,6 +137,7 @@ async function addCommand() {
   const resolved = normalizeHome(home);
   fs.mkdirSync(resolved, { recursive: true });
   await writeProfiles(existing.concat([{ label: label.trim(), home: resolved, dailyLimit: 0 }]));
+  prepareSharedSessions(resolved);
   refresh();
   const choice = await vscode.window.showInformationMessage("Added " + label.trim() + ". Switch now?", "Switch Now", "Not Yet");
   if (choice === "Switch Now") { await setActiveHome(resolved); refresh(); await reloadPrompt(label.trim()); }
@@ -177,9 +188,11 @@ function activate(context) {
     vscode.workspace.onDidChangeConfiguration((event) => { if (event.affectsConfiguration(OWN) || event.affectsConfiguration(settingParts()[0] + "." + settingParts()[1])) refresh(); })
   ];
   context.subscriptions.push(...disposables);
+  try { prepareSharedSessions(activeHome()); }
+  catch (error) { vscode.window.showErrorMessage("Could not share Codex sessions: " + error.message); }
   refresh();
 }
 
 function deactivate() { disposables.forEach((d) => d.dispose && d.dispose()); disposables = []; statusBar = null; }
 
-module.exports = { activate, deactivate, __internals: { normalizeHome, samePath, activity, profiles, settingParts } };
+module.exports = { activate, deactivate, __internals: { normalizeHome, samePath, activity, profiles, settingParts, prepareSharedSessions } };

@@ -2,7 +2,7 @@
   "name": "codex-account-manager",
   "displayName": "Codex Account Manager",
   "description": "Switch isolated Codex profiles from VS Code without copying credentials.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "tuncismail",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/tuncismail/codex-account-manager" },
