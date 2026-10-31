@@ -1,0 +1,50 @@
+{
+  "name": "codex-account-manager",
+  "displayName": "Codex Account Manager",
+  "description": "Switch isolated Codex profiles from VS Code without copying credentials.",
+  "version": "0.1.0",
+  "publisher": "tuncismail",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/tuncismail/codex-account-manager" },
+  "engines": { "vscode": "^1.94.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "codexAccountManager.switch", "title": "Codex Accounts: Switch Profile" },
+      { "command": "codexAccountManager.add", "title": "Codex Accounts: Add Profile" },
+      { "command": "codexAccountManager.remove", "title": "Codex Accounts: Remove Profile" },
+      { "command": "codexAccountManager.usage", "title": "Codex Accounts: Show Activity" },
+      { "command": "codexAccountManager.reveal", "title": "Codex Accounts: Reveal Profile Directory" }
+    ],
+    "configuration": {
+      "title": "Codex Account Manager",
+      "properties": {
+        "codexAccountManager.profiles": {
+          "type": "array", "scope": "machine", "default": [],
+          "description": "Named Codex profiles. Credentials stay inside each CODEX_HOME.",
+          "items": { "type": "object", "required": ["label", "home"], "properties": {
+            "label": { "type": "string" }, "home": { "type": "string" },
+            "dailyLimit": { "type": "number", "minimum": 0, "default": 0 }
+          }}
+        },
+        "codexAccountManager.showStatusBar": { "type": "boolean", "default": true },
+        "codexAccountManager.statusBarPriority": { "type": "number", "default": 100 },
+        "codexAccountManager.environmentSetting": {
+          "type": "string", "default": "chatgpt.environmentVariables",
+          "description": "VS Code setting used by the Codex extension for environment variables. Change this if your installed Codex extension uses another section."
+        },
+        "codexAccountManager.autoFailover": {
+          "type": "boolean", "default": false,
+          "description": "Switch to the next profile when the configured activity limit is reached. This is a local activity safeguard, not an OpenAI quota reading."
+        }
+      }
+    },
+    "menus": { "commandPalette": [
+      { "command": "codexAccountManager.switch" },
+      { "command": "codexAccountManager.usage" }
+    ]}
+  },
+  "scripts": { "test": "node test.js" }
+}
