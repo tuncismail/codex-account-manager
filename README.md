@@ -26,7 +26,7 @@ Install from VSIX...** in VS Code. For development, run `npm test` and press
 The installed Codex extension does not expose a writable
 `chatgpt.environmentVariables` setting. By default the manager sets
 `CODEX_HOME` as a Windows user environment variable and in the current
-extension host. Restart VS Code after switching so the Codex extension inherits
+extension host. Reload the VS Code window after switching so the Codex extension inherits
 the selected profile. An optional registered setting can be configured with
 `codexAccountManager.environmentSetting` as `section.setting`.
 
