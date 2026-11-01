@@ -4,216 +4,330 @@ const vscode = require("vscode");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { execFileSync } = require("child_process");
 const { ensureSharedSessions } = require("./shared-sessions");
+const { normalizeHome, samePath, normalizeProfiles, validateLabel } = require("./profiles");
 
 const OWN = "codexAccountManager";
 const DEFAULT_HOME = path.join(os.homedir(), ".codex");
-const VAR = "CODEX_HOME";
-let statusBar;
-let disposables = [];
+let context, statusBar, output, windowHome;
+let switching = false;
 
-function normalizeHome(value) {
-  if (typeof value !== "string") return "";
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  const normalized = path.normalize(trimmed);
-  return normalized.length > 3 ? normalized.replace(/[\\/]$/, "") : normalized;
+// Account directories are machine settings. Never consume workspace overrides.
+function setting(key, fallback) {
+  const value = vscode.workspace.getConfiguration(OWN).inspect(key);
+  return value?.globalValue ?? value?.defaultValue ?? fallback;
+}
+function selectedHome() {
+  const home = normalizeHome(setting("activeProfileHome", ""));
+  return path.isAbsolute(home) ? home : "";
+}
+function activeHome() {
+  const inherited = normalizeHome(process.env.CODEX_HOME);
+  return selectedHome() || (path.isAbsolute(inherited) ? inherited : DEFAULT_HOME);
+}
+function profiles() { return normalizeProfiles(setting("profiles", [])); }
+function writeSetting(key, value) { return vscode.workspace.getConfiguration(OWN).update(key, value, vscode.ConfigurationTarget.Global); }
+function labelFor(home) { return profiles().find(profile => samePath(profile.home, home))?.label || "Select account"; }
+function disconnected() { return context?.globalState.get("integrationDisabled", false); }
+
+async function reloadWindow() {
+  try { await vscode.commands.executeCommand("workbench.action.reloadWindow"); }
+  catch (error) {
+    // The command's RPC can be cancelled as its own extension host shuts down.
+    if (error?.name !== "Canceled" && error?.name !== "CancellationError") throw error;
+  }
 }
 
-function samePath(a, b) {
-  const left = normalizeHome(a), right = normalizeHome(b);
-  return left && right && (process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right);
+function bundledCli() {
+  if (process.platform !== "win32" || process.arch !== "x64") throw new Error("This release supports Windows x64 only.");
+  if (vscode.env.remoteName || vscode.workspace.getConfiguration("chatgpt").get("runCodexInWindowsSubsystemForLinux")) {
+    throw new Error("Use a local Windows window with Codex's WSL mode disabled. Remote and WSL sessions are not supported yet.");
+  }
+  const codex = vscode.extensions.getExtension("openai.chatgpt");
+  const executable = codex && path.join(codex.extensionPath, "bin", "windows-x86_64", "codex.exe");
+  if (!executable || !fs.existsSync(executable)) throw new Error("Install or enable the official OpenAI Codex extension for Windows first.");
+  return executable;
 }
 
-function settingParts() {
-  const configured = vscode.workspace.getConfiguration(OWN).get("environmentSetting") || "";
-  const index = configured.lastIndexOf(".");
-  return index < 1 ? null : [configured.slice(0, index), configured.slice(index + 1)];
+function launcherDirectory() { return path.join(context.globalStorageUri.fsPath, "launcher"); }
+function ownsLauncher(value) {
+  return typeof value === "string" && samePath(path.dirname(value), launcherDirectory()) && /^codex-profile-[\w.-]+\.exe$/i.test(path.basename(value));
+}
+function writeLauncherProfile(home) {
+  const executable = bundledCli();
+  const directory = launcherDirectory();
+  fs.mkdirSync(directory, { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
+  // Versioned filenames allow upgrades while the previous launcher is running.
+  const launcher = path.join(directory, "codex-profile-" + context.extension.packageJSON.version + ".exe");
+  if (!fs.existsSync(launcher)) fs.copyFileSync(path.join(context.extensionPath, "bin", "codex-profile-launcher.exe"), launcher);
+  const configFile = path.join(directory, "profile.json");
+  let previous;
+  try { previous = JSON.parse(fs.readFileSync(configFile, "utf8")); } catch (error) { if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error; }
+  const temporary = configFile + "." + process.pid + ".tmp";
+  try {
+    fs.writeFileSync(temporary, JSON.stringify({ home, executable }), { mode: 0o600 });
+    fs.renameSync(temporary, configFile);
+  } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
+  return { launcher, executableChanged: !samePath(previous?.executable, executable) };
 }
 
-function readEnvironment() {
-  const setting = settingParts();
-  if (!setting) return [];
-  const [section, key] = setting;
-  const inspected = vscode.workspace.getConfiguration(section).inspect(key);
-  const raw = inspected ? inspected.globalValue : undefined;
-  if (Array.isArray(raw)) return raw.filter((x) => x && typeof x.name === "string").map((x) => ({ name: x.name, value: String(x.value == null ? "" : x.value) }));
-  if (raw && typeof raw === "object") return Object.entries(raw).map(([name, value]) => ({ name, value: String(value == null ? "" : value) }));
+async function configureLauncher(home) {
+  const { launcher, executableChanged } = writeLauncherProfile(home);
+  const config = vscode.workspace.getConfiguration("chatgpt");
+  if (samePath(config.get("cliExecutable"), launcher)) return executableChanged;
+  if (!ownsLauncher(config.get("cliExecutable"))) {
+    await context.globalState.update("previousCliExecutable", config.inspect("cliExecutable")?.globalValue ?? null);
+  }
+  await config.update("cliExecutable", launcher, vscode.ConfigurationTarget.Global);
+  return true;
+}
+
+function prepareSharedSessions(home) {
+  if (setting("shareSessionHistory", false)) return ensureSharedSessions(DEFAULT_HOME, [home]);
   return [];
 }
 
-function activeHome() {
-  const entry = readEnvironment().find((x) => x.name === VAR);
-  const configured = entry && normalizeHome(entry.value);
-  return configured || normalizeHome(process.env[VAR]) || null;
-}
-
-async function setActiveHome(home) {
-  prepareSharedSessions(home);
-  const setting = settingParts();
-  if (!setting) {
-    const value = home ? normalizeHome(home) : "";
-    if (value) {
-      execFileSync("reg.exe", ["ADD", "HKCU\\Environment", "/v", VAR, "/t", "REG_SZ", "/d", value, "/f"], { windowsHide: true, stdio: "ignore" });
-      process.env[VAR] = value;
-    } else {
-      try {
-        execFileSync("reg.exe", ["QUERY", "HKCU\\Environment", "/v", VAR], { windowsHide: true, stdio: "ignore" });
-        execFileSync("reg.exe", ["DELETE", "HKCU\\Environment", "/v", VAR, "/f"], { windowsHide: true, stdio: "ignore" });
-      } catch (error) {
-        if (error.status !== 1) throw error;
-      }
-      delete process.env[VAR];
+async function switchToProfile(profile) {
+  if (switching) return;
+  if (!disconnected() && samePath(profile.home, selectedHome()) && samePath(profile.home, windowHome)) return;
+  switching = true;
+  const previous = activeHome();
+  const cliConfig = vscode.workspace.getConfiguration("chatgpt");
+  const previousCli = cliConfig.inspect("cliExecutable")?.globalValue;
+  try {
+    bundledCli();
+    prepareSharedSessions(profile.home);
+    try {
+      await configureLauncher(profile.home);
+      await writeSetting("activeProfileHome", profile.home);
+      await context.globalState.update("integrationDisabled", false);
+    } catch (error) {
+      writeLauncherProfile(previous);
+      await cliConfig.update("cliExecutable", previousCli, vscode.ConfigurationTarget.Global);
+      throw error;
     }
-    return;
-  }
-  const [section, key] = setting;
-  const kept = readEnvironment().filter((x) => x.name !== VAR);
-  const next = home ? kept.concat([{ name: VAR, value: normalizeHome(home) }]) : kept;
-  await vscode.workspace.getConfiguration(section).update(key, next, vscode.ConfigurationTarget.Global);
-}
-
-function prepareSharedSessions(nextHome) {
-  return ensureSharedSessions(DEFAULT_HOME, [
-    activeHome(),
-    nextHome,
-    ...profiles().map((profile) => profile.home),
-  ]);
-}
-
-function profiles() {
-  const raw = vscode.workspace.getConfiguration(OWN).get("profiles");
-  if (!Array.isArray(raw)) return [];
-  return raw.map((p, index) => ({
-    label: typeof p.label === "string" && p.label.trim() ? p.label.trim() : "Profile " + (index + 1),
-    home: normalizeHome(p.home), dailyLimit: Number.isFinite(Number(p.dailyLimit)) ? Math.max(0, Number(p.dailyLimit)) : 0
-  })).filter((p) => p.home && path.isAbsolute(p.home));
-}
-
-async function writeProfiles(value) {
-  await vscode.workspace.getConfiguration(OWN).update("profiles", value, vscode.ConfigurationTarget.Global);
-}
-
-function activity(home) {
-  const root = home || DEFAULT_HOME;
-  let files = 0, bytes = 0, newest = 0;
-  function walk(dir, depth) {
-    if (depth > 3) return;
-    let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
-    for (const entry of entries) {
-      const file = path.join(dir, entry.name);
-      try {
-        const stat = fs.statSync(file);
-        if (stat.isDirectory()) walk(file, depth + 1);
-        else if (stat.isFile()) { files += 1; bytes += stat.size; newest = Math.max(newest, stat.mtimeMs); }
-      } catch (_) {}
-    }
-  }
-  walk(root, 0);
-  return { files, bytes, newest };
-}
-
-function labelFor(home) {
-  const match = profiles().find((p) => samePath(p.home, home));
-  return match ? match.label : (home ? path.basename(home) : "Default");
+    process.env.CODEX_HOME = profile.home;
+    await reloadWindow();
+  } finally { switching = false; }
 }
 
 function refresh() {
   if (!statusBar) return;
-  if (!vscode.workspace.getConfiguration(OWN).get("showStatusBar")) { statusBar.hide(); return; }
-  const home = activeHome(), info = activity(home);
-  statusBar.text = "$(account) Codex: " + labelFor(home);
-  statusBar.tooltip = new vscode.MarkdownString("**Active Codex profile: " + labelFor(home) + "**\n\n`" + (home || DEFAULT_HOME) + "`\n\nFiles: " + info.files + "\n\nClick to switch.");
+  if (!setting("showStatusBar", true)) { statusBar.hide(); return; }
+  const connected = selectedHome() && !disconnected();
+  const pending = connected && !samePath(windowHome, selectedHome());
+  statusBar.text = "$(account) Codex: " + (connected ? labelFor(windowHome) : "Select account") + (pending ? " $(sync)" : "");
+  const tooltip = new vscode.MarkdownString();
+  tooltip.appendText(connected ? "Account in this window: " + labelFor(windowHome) : "Choose or add a Codex account.");
+  tooltip.appendText("\n\n" + profiles().length + " saved accounts.");
+  if (pending) tooltip.appendText("\n\nAnother window changed the selected account. Select it here to reload this window too.");
+  statusBar.tooltip = tooltip;
   statusBar.show();
 }
 
-async function reloadPrompt(label) {
-  const choice = await vscode.window.showInformationMessage("Switched to " + label + ". Reload the VS Code window so Codex starts with the new CODEX_HOME.", "Reload Window", "Later");
-  if (choice === "Reload Window") await vscode.commands.executeCommand("workbench.action.reloadWindow");
+async function chooseProfile(title) {
+  const list = profiles();
+  if (!list.length) { await vscode.window.showInformationMessage("No saved accounts. Add or import an account first."); return; }
+  const picked = await vscode.window.showQuickPick(list.map(profile => ({ label: profile.label, detail: profile.home, profile })), { title, matchOnDetail: true });
+  return picked?.profile;
 }
 
-async function switchCommand() {
-  const list = profiles().map((p) => ({ label: p.label, description: samePath(p.home, activeHome()) ? "$(check) active" : "", detail: p.home, profile: p }));
-  list.unshift({ label: "$(home) Default Codex profile", detail: DEFAULT_HOME, profile: { label: "Default", home: null } });
-  list.push({ label: "$(add) Add a profile...", profile: null });
-  const picked = await vscode.window.showQuickPick(list, { title: "Switch Codex profile", matchOnDetail: true });
+function switchPicker() {
+  return new Promise(resolve => {
+    const picker = vscode.window.createQuickPick();
+    const actions = [
+      { iconPath: new vscode.ThemeIcon("edit"), tooltip: "Rename account", action: "rename" },
+      { iconPath: new vscode.ThemeIcon("sign-in"), tooltip: "Sign in", action: "login" },
+      { iconPath: new vscode.ThemeIcon("folder-opened"), tooltip: "Open account folder", action: "reveal" },
+      { iconPath: new vscode.ThemeIcon("trash"), tooltip: "Remove from list", action: "remove" }
+    ];
+    picker.title = "Switch Codex account";
+    picker.placeholder = "Choose an account to switch and reload this window";
+    picker.matchOnDetail = true;
+    picker.items = [...profiles().map(profile => ({
+      label: profile.label,
+      description: !disconnected() && samePath(profile.home, windowHome) ? "active in this window" : "",
+      detail: profile.home, profile, buttons: actions
+    })), { label: "$(add) Add an account...", action: "add" }, { label: "$(folder-opened) Import an existing account...", action: "import" }];
+    let finished = false;
+    const subscriptions = [];
+    function finish(result) {
+      if (finished) return;
+      finished = true;
+      subscriptions.forEach(item => item.dispose());
+      picker.dispose();
+      resolve(result);
+    }
+    subscriptions.push(picker.onDidAccept(() => finish(picker.selectedItems[0])));
+    subscriptions.push(picker.onDidTriggerItemButton(event => finish({ profile: event.item.profile, action: event.button.action })));
+    subscriptions.push(picker.onDidHide(() => finish(undefined)));
+    picker.show();
+  });
+}
+
+async function switchCommand(home) {
+  if (typeof home === "string") {
+    const profile = profiles().find(item => samePath(item.home, home));
+    if (!profile) throw new Error("That account is not in your saved profiles.");
+    return switchToProfile(profile);
+  }
+  const picked = await switchPicker();
   if (!picked) return;
-  if (!picked.profile) return addCommand();
-  if (samePath(picked.profile.home, activeHome()) || (!picked.profile.home && !activeHome())) return;
-  if (picked.profile.home && !fs.existsSync(picked.profile.home)) fs.mkdirSync(picked.profile.home, { recursive: true });
-  await setActiveHome(picked.profile.home);
+  switch (picked.action) {
+    case "add": return addCommand();
+    case "import": return importCommand();
+    case "rename": return renameProfile(picked.profile);
+    case "login": return loginProfile(picked.profile);
+    case "reveal": return revealProfile(picked.profile);
+    case "remove": return removeProfile(picked.profile);
+    default: return switchToProfile(picked.profile);
+  }
+}
+
+function askLabel(existing, profile) {
+  return vscode.window.showInputBox({ title: profile ? "Rename Codex account" : "Name your Codex account", value: profile?.label, placeHolder: "Personal", validateInput: value => validateLabel(value, existing, profile?.home) });
+}
+async function saveProfile(label, home) {
+  const profile = { label: label.trim(), home: normalizeHome(home) };
+  if (!path.isAbsolute(profile.home)) throw new Error("Use an absolute account directory.");
+  const existing = profiles();
+  if (existing.some(item => samePath(item.home, profile.home))) throw new Error("That account directory is already saved.");
+  const labelError = validateLabel(profile.label, existing);
+  if (labelError) throw new Error(labelError);
+  fs.mkdirSync(profile.home, { recursive: true });
+  await writeSetting("profiles", [...existing, profile]);
   refresh();
-  await reloadPrompt(picked.profile.label);
+  return profile;
 }
 
 async function addCommand() {
-  const existing = profiles();
-  const label = await vscode.window.showInputBox({ title: "Add Codex profile", prompt: "Profile name", placeHolder: "Personal", validateInput: (v) => !v.trim() ? "Enter a name." : existing.some((p) => p.label.toLowerCase() === v.trim().toLowerCase()) ? "That name already exists." : null });
+  const label = await askLabel(profiles());
   if (!label) return;
-  const suggested = path.join(os.homedir(), ".codex-" + label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-"));
-  const home = await vscode.window.showInputBox({ title: "Codex profile directory", value: suggested, prompt: "Absolute CODEX_HOME directory", validateInput: (v) => !path.isAbsolute(normalizeHome(v)) ? "Use an absolute path." : existing.some((p) => samePath(p.home, v)) ? "That directory is already used." : null });
+  const slug = label.trim().normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "account";
+  const base = path.join(os.homedir(), ".codex-" + slug);
+  let suggested = base, suffix = 2;
+  while (fs.existsSync(suggested) || profiles().some(item => samePath(item.home, suggested))) suggested = base + "-" + suffix++;
+  const home = await vscode.window.showInputBox({ title: "Codex account directory", value: suggested, prompt: "Credentials and account settings stay in this folder.", validateInput: value => !path.isAbsolute(normalizeHome(value)) ? "Use an absolute path." : profiles().some(item => samePath(item.home, value)) ? "That directory is already saved." : undefined });
   if (!home) return;
-  const resolved = normalizeHome(home);
-  fs.mkdirSync(resolved, { recursive: true });
-  await writeProfiles(existing.concat([{ label: label.trim(), home: resolved, dailyLimit: 0 }]));
-  prepareSharedSessions(resolved);
+  const profile = await saveProfile(label, home);
+  const choice = await vscode.window.showInformationMessage("Added " + profile.label + ".", "Sign In", "Switch to Account");
+  if (choice === "Sign In") return loginProfile(profile);
+  if (choice === "Switch to Account") return switchToProfile(profile);
+}
+
+async function importCommand() {
+  const folders = await vscode.window.showOpenDialog({ title: "Select an existing Codex account directory", canSelectFolders: true, canSelectFiles: false, canSelectMany: false, defaultUri: vscode.Uri.file(activeHome()), openLabel: "Import account" });
+  if (!folders?.length) return;
+  const label = await askLabel(profiles());
+  if (!label) return;
+  const profile = await saveProfile(label, folders[0].fsPath);
+  if (await vscode.window.showInformationMessage("Imported " + profile.label + ".", "Switch to Account") === "Switch to Account") await switchToProfile(profile);
+}
+
+async function renameProfile(profile) {
+  if (!profile) return;
+  const label = await askLabel(profiles(), profile);
+  if (!label) return;
+  await writeSetting("profiles", profiles().map(item => samePath(item.home, profile.home) ? { ...item, label: label.trim() } : item));
   refresh();
-  const choice = await vscode.window.showInformationMessage("Added " + label.trim() + ". Switch now?", "Switch Now", "Not Yet");
-  if (choice === "Switch Now") { await setActiveHome(resolved); refresh(); await reloadPrompt(label.trim()); }
 }
-
-async function removeCommand() {
-  const list = profiles();
-  if (!list.length) return vscode.window.showInformationMessage("No profiles configured.");
-  const picked = await vscode.window.showQuickPick(list.map((p) => ({ label: p.label, detail: p.home, profile: p })), { title: "Remove Codex profile", placeHolder: "The directory and credentials will not be deleted." });
-  if (!picked) return;
-  await writeProfiles(list.filter((p) => !samePath(p.home, picked.profile.home)));
+async function loginProfile(profile) {
+  if (!profile) return;
+  const executable = bundledCli();
+  fs.mkdirSync(profile.home, { recursive: true });
+  const terminal = vscode.window.createTerminal({ name: "Codex Login: " + profile.label, cwd: os.homedir(), env: { CODEX_HOME: profile.home }, shellPath: executable, shellArgs: ["login", "--device-auth"] });
+  terminal.show();
+}
+async function removeProfile(profile) {
+  if (!profile) return;
+  if (!disconnected() && (samePath(profile.home, selectedHome()) || samePath(profile.home, windowHome))) {
+    await vscode.window.showWarningMessage("Switch to another account, or run Codex Accounts: Disconnect Account Manager, before removing the active account.");
+    return;
+  }
+  await writeSetting("profiles", profiles().filter(item => !samePath(item.home, profile.home)));
   refresh();
-  vscode.window.showInformationMessage("Removed " + picked.profile.label + " from the list. Its files were not deleted.");
+  await vscode.window.showInformationMessage("Removed " + profile.label + " from the list. Its files and credentials are still on disk.");
+}
+async function revealProfile(profile) {
+  const home = profile?.home || windowHome || activeHome();
+  if (!fs.existsSync(home)) throw new Error("The account directory does not exist yet.");
+  await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(home));
 }
 
-async function usageCommand() {
-  const home = activeHome(), info = activity(home), profile = profiles().find((p) => samePath(p.home, home));
-  const limit = profile ? profile.dailyLimit : 0;
-  const message = "Codex activity for " + labelFor(home) + ": " + info.files + " files (" + Math.round(info.bytes / 1024) + " KB) in CODEX_HOME." + (limit ? " Local daily activity limit: " + limit + "." : " No local activity limit configured.");
-  vscode.window.showInformationMessage(message);
-  if (limit && info.files >= limit && vscode.workspace.getConfiguration(OWN).get("autoFailover")) await failover(profile);
+async function disconnectCommand() {
+  const config = vscode.workspace.getConfiguration("chatgpt");
+  if (ownsLauncher(config.get("cliExecutable"))) {
+    await config.update("cliExecutable", context.globalState.get("previousCliExecutable") ?? undefined, vscode.ConfigurationTarget.Global);
+  }
+  await context.globalState.update("integrationDisabled", true);
+  await writeSetting("activeProfileHome", undefined);
+  await reloadWindow();
 }
 
-async function failover(current) {
-  const next = profiles().find((p) => !samePath(p.home, current.home) && (!p.dailyLimit || activity(p.home).files < p.dailyLimit));
-  if (!next) return vscode.window.showWarningMessage("No eligible backup Codex profile is available.");
-  await setActiveHome(next.home); refresh(); await reloadPrompt(next.label);
+function diagnosticsCommand() {
+  output.clear();
+  const codex = vscode.extensions.getExtension("openai.chatgpt");
+  output.appendLine(JSON.stringify({
+    managerVersion: context.extension.packageJSON.version,
+    vscodeVersion: vscode.version,
+    platform: process.platform,
+    architecture: process.arch,
+    remoteWindow: Boolean(vscode.env.remoteName),
+    codexVersion: codex?.packageJSON.version || "not installed",
+    savedAccounts: profiles().length,
+    selectedAccountSaved: profiles().some(item => samePath(item.home, selectedHome())),
+    launcherConnected: ownsLauncher(vscode.workspace.getConfiguration("chatgpt").get("cliExecutable")),
+    integrationDisabled: disconnected(),
+    sessionSharing: setting("shareSessionHistory", false),
+    windowNeedsReload: Boolean(selectedHome() && !samePath(windowHome, selectedHome()))
+  }, null, 2));
+  output.show();
 }
 
-function revealCommand() {
-  const dir = activeHome() || DEFAULT_HOME;
-  if (fs.existsSync(dir)) return vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(dir));
-  vscode.window.showWarningMessage(dir + " does not exist yet.");
-}
+function guarded(fn) { return async (...args) => { try { return await fn(...args); } catch (error) { await vscode.window.showErrorMessage("Codex Accounts: " + error.message); } }; }
 
-function guarded(fn) { return async (...args) => { try { return await fn(...args); } catch (error) { vscode.window.showErrorMessage("Codex account operation failed: " + error.message); } }; }
-
-function activate(context) {
-  statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, vscode.workspace.getConfiguration(OWN).get("statusBarPriority") || 100);
+async function activate(extensionContext) {
+  context = extensionContext;
+  windowHome = activeHome();
+  output = vscode.window.createOutputChannel("Codex Accounts");
+  statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, setting("statusBarPriority", 100));
   statusBar.command = "codexAccountManager.switch";
-  statusBar.name = "Codex Profile";
-  disposables = [statusBar,
-    vscode.commands.registerCommand("codexAccountManager.switch", guarded(switchCommand)),
-    vscode.commands.registerCommand("codexAccountManager.add", guarded(addCommand)),
-    vscode.commands.registerCommand("codexAccountManager.remove", guarded(removeCommand)),
-    vscode.commands.registerCommand("codexAccountManager.usage", guarded(usageCommand)),
-    vscode.commands.registerCommand("codexAccountManager.reveal", guarded(revealCommand)),
-    vscode.workspace.onDidChangeConfiguration((event) => { const setting = settingParts(); if (event.affectsConfiguration(OWN) || (setting && event.affectsConfiguration(setting[0] + "." + setting[1]))) refresh(); })
-  ];
-  context.subscriptions.push(...disposables);
-  try { prepareSharedSessions(activeHome()); }
-  catch (error) { vscode.window.showErrorMessage("Could not share Codex sessions: " + error.message); }
+  statusBar.name = "Codex account";
+  const commands = {
+    switch: switchCommand, add: addCommand, import: importCommand,
+    rename: async () => renameProfile(await chooseProfile("Rename Codex account")),
+    login: async () => loginProfile(await chooseProfile("Sign in to Codex account")),
+    remove: async () => removeProfile(await chooseProfile("Remove Codex account")),
+    reveal: revealProfile, disconnect: disconnectCommand, diagnostics: diagnosticsCommand,
+    // Compatibility for older keybindings; local file counts were never quota data.
+    usage: diagnosticsCommand
+  };
+  context.subscriptions.push(output, statusBar,
+    ...Object.entries(commands).map(([name, action]) => vscode.commands.registerCommand(OWN + "." + name, guarded(action))),
+    vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration(OWN)) refresh(); }));
   refresh();
+  if (!selectedHome()) {
+    await context.globalState.update("sharingMigrated", true);
+    return;
+  }
+  if (disconnected()) return;
+  try {
+    // Preserve the sharing behavior of installations upgraded from 0.4.
+    if (!context.globalState.get("sharingMigrated")) {
+      const sharing = vscode.workspace.getConfiguration(OWN).inspect("shareSessionHistory");
+      if (sharing?.globalValue === undefined && context.globalState.get("previousCliExecutable") !== undefined) {
+        await writeSetting("shareSessionHistory", true);
+      }
+      await context.globalState.update("sharingMigrated", true);
+    }
+    bundledCli();
+    prepareSharedSessions(selectedHome());
+    const changed = await configureLauncher(selectedHome());
+    process.env.CODEX_HOME = selectedHome();
+    if (changed) await reloadWindow();
+  } catch (error) { await vscode.window.showErrorMessage("Codex Accounts setup: " + error.message); }
 }
 
-function deactivate() { disposables.forEach((d) => d.dispose && d.dispose()); disposables = []; statusBar = null; }
-
-module.exports = { activate, deactivate, __internals: { normalizeHome, samePath, activity, profiles, settingParts, prepareSharedSessions } };
+function deactivate() { statusBar = undefined; output = undefined; context = undefined; }
+module.exports = { activate, deactivate, __internals: { setting, selectedHome, activeHome, profiles, labelFor, switchCommand, renameProfile, removeProfile, disconnectCommand, diagnosticsCommand, saveProfile } };

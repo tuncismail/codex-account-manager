@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+<title id="title">Codex Account Manager for VS Code</title>
+<desc id="desc">Illustrated account picker with Personal and Work profiles, automatic window reload, and remembered selection.</desc>
+<defs>
+<linearGradient id="bg" x2="1" y2="1"><stop stop-color="#0b1420"/><stop offset="1" stop-color="#142b32"/></linearGradient>
+<radialGradient id="glow"><stop stop-color="#4ce0b2" stop-opacity=".13"/><stop offset="1" stop-color="#4ce0b2" stop-opacity="0"/></radialGradient>
+<linearGradient id="card" x2="0" y2="1"><stop stop-color="#1d2936"/><stop offset="1" stop-color="#151e29"/></linearGradient>
+</defs>
+<rect width="1280" height="640" rx="24" fill="url(#bg)"/>
+<circle cx="1080" cy="390" r="410" fill="url(#glow)"/>
+<path d="M640 0v640M0 520h1280" stroke="#a6b7c6" stroke-opacity=".06"/>
+<g font-family="Segoe UI,Arial,sans-serif">
+<g transform="translate(64 62)">
+<rect width="38" height="38" rx="11" fill="#50e3b5"/>
+<path d="m12 13-5 6 5 6m14-12 5 6-5 6m-5-17-4 22" fill="none" stroke="#0c2522" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="52" y="26" fill="#e5f0f4" font-size="22" font-weight="600">Codex Account Manager</text>
+</g>
+<rect x="64" y="146" width="227" height="32" rx="16" fill="#213e3c"/>
+<circle cx="82" cy="162" r="4" fill="#50e3b5"/>
+<text x="96" y="168" fill="#9ff0d5" font-size="13" font-weight="600" letter-spacing="1.5">BUILT FOR VS CODE</text>
+<text x="60" y="256" fill="#f1f7f9" font-size="62" font-weight="700" letter-spacing="-2">Your accounts.</text>
+<text x="60" y="326" fill="#55e2b6" font-size="62" font-weight="700" letter-spacing="-2">One workspace.</text>
+<text x="64" y="382" fill="#b2c1ce" font-size="21">Switch Codex profiles. Keep your flow.</text>
+<text x="64" y="415" fill="#b2c1ce" font-size="21">Named accounts. Automatic window reload.</text>
+<g transform="translate(64 458)" font-size="14" fill="#d0dde6">
+<rect width="126" height="33" rx="8" fill="#1c303c" stroke="#30434e"/><text x="19" y="22">Windows x64</text>
+<rect x="138" width="122" height="33" rx="8" fill="#1c303c" stroke="#30434e"/><text x="158" y="22">Open source</text>
+<rect x="272" width="89" height="33" rx="8" fill="#1c303c" stroke="#30434e"/><text x="293" y="22">MIT</text>
+</g>
+<g transform="translate(679 125)">
+<rect x="0" y="12" width="533" height="355" rx="18" fill="#000" opacity=".18"/>
+<rect width="533" height="355" rx="18" fill="url(#card)" stroke="#3b4c5c"/>
+<circle cx="24" cy="25" r="4" fill="#668093"/><circle cx="40" cy="25" r="4" fill="#668093"/><circle cx="56" cy="25" r="4" fill="#668093"/>
+<text x="266" y="31" text-anchor="middle" font-size="15" fill="#becbd5">Switch Codex account</text>
+<rect x="19" y="51" width="495" height="43" rx="8" fill="#111b27" stroke="#3b5e6b"/>
+<circle cx="39" cy="70" r="6" fill="none" stroke="#8299aa" stroke-width="1.5"/>
+<path d="m43 74 5 5" stroke="#8299aa" stroke-width="1.5"/>
+<text x="61" y="78" font-size="15" fill="#8299aa">Find an account...</text>
+<g transform="translate(20 113)">
+<rect width="492" height="78" rx="10" fill="#253743"/>
+<rect x="15" y="16" width="44" height="44" rx="13" fill="#344c59"/>
+<text x="37" y="44" text-anchor="middle" font-size="19" fill="#c7dce7" font-weight="600">P</text>
+<text x="74" y="32" fill="#e6eef3" font-size="19" font-weight="600">Personal</text>
+<text x="74" y="55" fill="#8fa9b8" font-size="13">active in this window</text>
+<path d="m449 38 6 6 12-13" stroke="#6fe6bf" stroke-width="2" fill="none" stroke-linecap="round"/>
+</g>
+<g transform="translate(20 201)">
+<rect width="492" height="78" rx="10" fill="#1f4543" stroke="#4fbd9e"/>
+<rect x="15" y="16" width="44" height="44" rx="13" fill="#31675b"/>
+<text x="37" y="44" text-anchor="middle" font-size="19" fill="#b5f3d9" font-weight="600">W</text>
+<text x="74" y="32" fill="#e7f6f0" font-size="19" font-weight="600">Work</text>
+<text x="74" y="55" fill="#9fc8bc" font-size="13">your next account</text>
+<path d="M441 39h27m-7-7 7 7-7 7" stroke="#73ebc2" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="38" y="319" fill="#9fb6c5" font-size="16">+ Add an account</text>
+<text x="295" y="319" fill="#9fb6c5" font-size="16">Import existing account</text>
+</g>
+<g transform="translate(770 500)">
+<rect width="352" height="43" rx="21.5" fill="#122c2a" stroke="#315e51"/>
+<path d="M23 14a8 8 0 1 1-4 8m0-7 4-1 1 4" fill="none" stroke="#66e2b8" stroke-width="1.6" stroke-linecap="round"/>
+<text x="44" y="28" fill="#b8e6d5" font-size="14">Reload Window</text>
+<circle cx="165" cy="23" r="2" fill="#69988a"/>
+<text x="181" y="28" fill="#b8e6d5" font-size="14">Selection remembered</text>
+</g>
+<text x="64" y="592" fill="#728b9c" font-size="13" letter-spacing="1">INDEPENDENT COMMUNITY EXTENSION</text>
+<text x="1209" y="592" text-anchor="end" fill="#728b9c" font-size="12">Account picker illustration</text>
+</g>
+</svg>

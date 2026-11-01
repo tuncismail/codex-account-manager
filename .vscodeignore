@@ -1,4 +1,13 @@
-.git/**
-.vscode/**
-test.js
-*.vsix
+**
+!package.json
+!README.md
+!README.tr.md
+!CHANGELOG.md
+!LICENSE
+!extension.js
+!profiles.js
+!shared-sessions.js
+!launcher.cs
+!bin/
+!bin/codex-profile-launcher.exe
+!assets/banner.png

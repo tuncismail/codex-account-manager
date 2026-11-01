@@ -13,7 +13,26 @@ function stat(file) {
 }
 
 function identity(file) {
-  return fs.realpathSync(file).toLowerCase();
+  const real = fs.realpathSync(file);
+  return process.platform === "win32" ? real.toLowerCase() : real;
+}
+
+function copyMissingTree(source, target) {
+  fs.mkdirSync(target, { recursive: true });
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const from = path.join(source, entry.name), to = path.join(target, entry.name);
+    const destination = stat(to);
+    if (entry.isSymbolicLink() || destination?.isSymbolicLink()) throw new Error("Session sharing does not follow nested symbolic links.");
+    if (entry.isDirectory()) {
+      if (destination && !destination.isDirectory()) throw new Error("Conflicting session paths: " + to);
+      copyMissingTree(from, to);
+    } else if (entry.isFile()) {
+      if (!destination) fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL);
+      else if (!destination.isFile() || !fs.readFileSync(from).equals(fs.readFileSync(to))) {
+        throw new Error("Conflicting session files. Original histories were retained: " + to);
+      }
+    } else throw new Error("Unsupported session file: " + from);
+  }
 }
 
 function mergeFile(source, target) {
@@ -31,7 +50,7 @@ function mergeFile(source, target) {
     fs.linkSync(target, source);
     return;
   }
-  if (targetStat && identity(source) === identity(target)) return;
+  if (targetStat && ((sourceStat.dev === targetStat.dev && sourceStat.ino === targetStat.ino) || identity(source) === identity(target))) return;
   if (targetStat) {
     const sourceText = fs.readFileSync(source, "utf8");
     const targetText = fs.readFileSync(target, "utf8");
@@ -52,8 +71,6 @@ function mergeFile(source, target) {
   }
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.linkSync(source, target);
-  fs.unlinkSync(source);
-  fs.linkSync(target, source);
 }
 
 function mergeDirectory(source, target) {
@@ -72,6 +89,9 @@ function mergeDirectory(source, target) {
     return;
   }
   if (identity(source) === identity(target)) return;
+  // Merge nested dates before replacing the source. Keep the complete original
+  // directory as a backup, including files that conflict with another history.
+  copyMissingTree(source, target);
   const backup = source + ".account-switcher-backup-" + crypto.randomUUID();
   fs.renameSync(source, backup);
   try {
@@ -80,12 +100,7 @@ function mergeDirectory(source, target) {
     fs.renameSync(backup, source);
     throw error;
   }
-  for (const entry of fs.readdirSync(backup, { withFileTypes: true })) {
-    const destination = path.join(target, entry.name);
-    if (!stat(destination)) {
-      fs.renameSync(path.join(backup, entry.name), destination);
-    }
-  }
+  return backup;
 }
 
 function ensureSharedSessions(defaultHome, profileHomes) {
@@ -97,6 +112,8 @@ function ensureSharedSessions(defaultHome, profileHomes) {
   for (const home of profileHomes.filter(Boolean)) {
     if (!path.isAbsolute(home)) throw new Error("Codex profile home must be absolute.");
     fs.mkdirSync(home, { recursive: true });
+    if (identity(home) === identity(defaultHome)) continue;
+    if (fs.statSync(home).dev !== fs.statSync(defaultHome).dev) throw new Error("Shared session history requires account directories on the same volume.");
     const sessionsBackup = mergeDirectory(path.join(home, SHARED_DIRECTORY), sharedSessions);
     if (sessionsBackup) backups.push(sessionsBackup);
     const indexBackup = mergeFile(path.join(home, SHARED_FILE), sharedIndex);

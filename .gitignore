@@ -1,2 +1,17 @@
 *.vsix
 node_modules/
+bin/*.exe
+coverage/
+test-results/
+*.log
+*.tmp
+.env
+.env.*
+!.env.example
+auth.json
+profile.json
+session_index.jsonl
+sessions/
+.codex/
+.codex-*/
+.vscode/
