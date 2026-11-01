@@ -1,0 +1,36 @@
+"use strict";
+const test = require("node:test"), assert = require("node:assert/strict"), fs = require("fs"), path = require("path");
+const { ensureSharedSessions } = require("../src/shared-sessions");
+const { temporaryDirectory, removeTemporaryDirectory } = require("./helpers");
+test("shared histories merge nested dates, preserve originals and are idempotent", t => {
+  const root = temporaryDirectory(); t.after(() => removeTemporaryDirectory(root));
+  const shared = path.join(root, "shared"), profile = path.join(root, "profile");
+  const day = path.join("sessions", "2026", "01", "01");
+  for (const home of [shared, profile]) fs.mkdirSync(path.join(home, day), { recursive: true });
+  fs.writeFileSync(path.join(shared, day, "first.jsonl"), "first");
+  fs.writeFileSync(path.join(profile, day, "second.jsonl"), "second");
+  fs.writeFileSync(path.join(profile, "auth.json"), "fixture-only");
+  fs.writeFileSync(path.join(profile, "session_index.jsonl"), '{"id":"second"}\n');
+  const backups = ensureSharedSessions(shared, [profile]);
+  assert.equal(backups.length, 1);
+  assert.equal(fs.readFileSync(path.join(backups[0], "2026", "01", "01", "second.jsonl"), "utf8"), "second");
+  assert.equal(fs.readFileSync(path.join(profile, day, "first.jsonl"), "utf8"), "first");
+  assert.equal(fs.readFileSync(path.join(shared, day, "second.jsonl"), "utf8"), "second");
+  const before = fs.readdirSync(profile);
+  ensureSharedSessions(shared, [profile, profile]);
+  assert.deepEqual(fs.readdirSync(profile), before);
+  assert.equal(fs.readFileSync(path.join(profile, "auth.json"), "utf8"), "fixture-only");
+  assert(!fs.existsSync(path.join(shared, "auth.json")));
+  fs.appendFileSync(path.join(shared, "session_index.jsonl"), '{"id":"third"}\n');
+  assert(fs.readFileSync(path.join(profile, "session_index.jsonl"), "utf8").includes("third"));
+});
+test("conflicting transcripts are retained instead of silently disappearing", t => {
+  const root = temporaryDirectory(); t.after(() => removeTemporaryDirectory(root));
+  const shared = path.join(root, "shared"), profile = path.join(root, "profile");
+  for (const home of [shared, profile]) fs.mkdirSync(path.join(home, "sessions"), { recursive: true });
+  fs.writeFileSync(path.join(shared, "sessions", "same.jsonl"), "one");
+  fs.writeFileSync(path.join(profile, "sessions", "same.jsonl"), "two");
+  assert.throws(() => ensureSharedSessions(shared, [profile]), /Conflicting/);
+  assert.equal(fs.readFileSync(path.join(profile, "sessions", "same.jsonl"), "utf8"), "two");
+  assert(!fs.lstatSync(path.join(profile, "sessions")).isSymbolicLink());
+});

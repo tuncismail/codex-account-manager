@@ -1,0 +1,160 @@
+{
+  "name": "codex-account-manager",
+  "displayName": "Codex Account Manager",
+  "description": "OpenAI Codex account switcher for VS Code on Windows. Manage multiple accounts with automatic reload, isolated credentials, and named profiles.",
+  "version": "0.5.0",
+  "publisher": "tuncismail",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tuncismail/codex-account-manager"
+  },
+  "engines": {
+    "vscode": "^1.96.2",
+    "node": ">=22"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codexAccountManager.switch",
+        "title": "Codex Accounts: Switch Account"
+      },
+      {
+        "command": "codexAccountManager.add",
+        "title": "Codex Accounts: Add Account"
+      },
+      {
+        "command": "codexAccountManager.import",
+        "title": "Codex Accounts: Import Existing Account"
+      },
+      {
+        "command": "codexAccountManager.rename",
+        "title": "Codex Accounts: Rename Account"
+      },
+      {
+        "command": "codexAccountManager.login",
+        "title": "Codex Accounts: Sign In to Account"
+      },
+      {
+        "command": "codexAccountManager.remove",
+        "title": "Codex Accounts: Remove Account"
+      },
+      {
+        "command": "codexAccountManager.reveal",
+        "title": "Codex Accounts: Open Account Folder"
+      },
+      {
+        "command": "codexAccountManager.diagnostics",
+        "title": "Codex Accounts: Show Diagnostics"
+      },
+      {
+        "command": "codexAccountManager.disconnect",
+        "title": "Codex Accounts: Disconnect Account Manager"
+      }
+    ],
+    "configuration": {
+      "title": "Codex Account Manager",
+      "properties": {
+        "codexAccountManager.activeProfileHome": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Last selected account directory. Managed by the account switcher."
+        },
+        "codexAccountManager.profiles": {
+          "type": "array",
+          "scope": "machine",
+          "default": [],
+          "description": "Named accounts. Credentials remain in each account directory.",
+          "items": {
+            "type": "object",
+            "required": [
+              "label",
+              "home"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "home": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "codexAccountManager.shareSessionHistory": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "description": "Share transcripts and the session index with the normal Codex home. Keep off for separate histories. Existing links are not undone when disabled; original directories are backed up."
+        },
+        "codexAccountManager.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "description": "Show the account selector in the status bar."
+        },
+        "codexAccountManager.statusBarPriority": {
+          "type": "number",
+          "default": 100,
+          "scope": "machine",
+          "description": "Status bar position. Reload the window after changing this value."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-launcher.ps1",
+    "check": "node scripts/check.js",
+    "test": "node --test test/*.test.js",
+    "test:launcher": "node --test test/launcher.integration.js",
+    "test:vscode": "node test/run-vscode.js",
+    "audit:source": "node scripts/audit-source.js",
+    "vscode:prepublish": "npm run check && npm run build",
+    "package": "vsce package --target win32-x64"
+  },
+  "homepage": "https://github.com/tuncismail/codex-account-manager#readme",
+  "bugs": {
+    "url": "https://github.com/tuncismail/codex-account-manager/issues"
+  },
+  "keywords": [
+    "codex",
+    "account-switcher",
+    "multi-account",
+    "vscode",
+    "openai",
+    "windows"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Account switching starts a local Codex process."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Local Windows profile directories are required."
+    }
+  },
+  "devDependencies": {
+    "@vscode/vsce": "4.1.0"
+  },
+  "overrides": {
+    "@vscode/vsce": {
+      "minimatch": "11.0.1"
+    }
+  }
+}

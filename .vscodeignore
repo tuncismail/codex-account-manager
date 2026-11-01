@@ -1,0 +1,12 @@
+**
+!package.json
+!README.md
+!docs/README.tr.md
+!LICENSE
+!src/extension.js
+!src/profiles.js
+!src/shared-sessions.js
+!src/launcher.cs
+!bin/
+!bin/codex-profile-launcher.exe
+!assets/banner.png
